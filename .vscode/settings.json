@@ -1,4 +1,6 @@
 {
   "editor.formatOnSave": true,
-  "files.autoSave": "onFocusChange"
+  "files.autoSave": "onFocusChange",
+  "editor.fontSize": 15,
+  "workbench.colorTheme": "Dark+"
 }
