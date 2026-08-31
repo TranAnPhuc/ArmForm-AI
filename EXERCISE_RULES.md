@@ -6,6 +6,8 @@ Dumbbell Biceps Curl
 
 The first version assumes the user is viewed approximately from the side.
 
+The user manually selects which arm (LEFT or RIGHT) is being tracked before starting. Automatic arm detection is not implemented in the early MVP.
+
 The camera should clearly see:
 
 - shoulder;
@@ -122,6 +124,8 @@ If shoulder, elbow or wrist landmarks have low confidence:
 - do not count a repetition;
 - show tracking feedback;
 - wait until reliable landmarks return.
+
+Frames marked invalid or low-confidence must not advance the curl state machine. The state machine only processes frames that have been marked valid by pose processing.
 
 ## Noise Handling
 

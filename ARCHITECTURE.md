@@ -55,9 +55,11 @@ Responsible for converting raw pose data into useful normalized information.
 
 Possible responsibilities:
 
-- selecting left or right arm;
+- applying the arm (LEFT or RIGHT) manually selected by the user; the Pose Engine does not choose the arm automatically;
 - validating landmark confidence;
 - normalizing coordinates.
+
+Output includes a validity flag (for example `isValid: boolean`) alongside the normalized landmarks, based on shoulder/elbow/wrist confidence.
 
 ### Exercise Engine
 
@@ -68,7 +70,8 @@ Input example:
 - shoulder coordinate;
 - elbow coordinate;
 - wrist coordinate;
-- timestamp.
+- timestamp;
+- validity flag from the Pose Engine.
 
 Output example:
 
@@ -76,6 +79,8 @@ Output example:
 - movement phase;
 - rep count;
 - repetition metrics.
+
+The Exercise Engine must only advance the curl state machine on frames marked valid. Invalid or low-confidence frames must not cause a state transition.
 
 This module must not depend on React.
 

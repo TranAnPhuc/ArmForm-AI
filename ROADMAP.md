@@ -42,6 +42,14 @@ Biceps Curl Form Tracker
 
 No camera or MediaPipe yet.
 
+Definition of Done:
+
+- `npm run dev` works.
+- `npm run test` passes.
+- `npm run build` passes.
+- The application displays "ArmForm AI", "Biceps Curl Form Tracker", and a "Start Workout" button.
+- "Start Workout" does nothing yet.
+
 ---
 
 ## Milestone 2 — Camera
@@ -71,6 +79,8 @@ Use MediaPipe to detect:
 - wrist.
 
 Display landmarks using Canvas.
+
+The user manually selects LEFT or RIGHT arm before tracking starts. Automatic arm selection is not implemented yet.
 
 Learn:
 
@@ -156,10 +166,11 @@ Create a practical workout screen showing:
 - current rep;
 - current angle;
 - phase;
-- set;
-- weight;
+- weight (manually entered by the user, in kilograms; no lb conversion yet);
 - form feedback;
 - completed repetitions.
+
+This is a single-session rep tracker. Multi-set workout management (multiple sets, rest timers, per-set summaries) is not part of the early MVP and may be introduced later.
 
 ---
 

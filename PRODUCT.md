@@ -32,6 +32,8 @@ Dumbbell Biceps Curl
 
 The MVP will support only one visible arm at a time.
 
+The user manually selects LEFT or RIGHT arm before starting tracking. Automatic arm detection is not part of the early MVP.
+
 ## MVP Features
 
 The application should be able to:

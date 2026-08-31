@@ -128,6 +128,14 @@ React components should focus on:
 
 Do not place core rep-counting logic inside React components.
 
+### State Management
+
+Prefer `useState` for simple UI state.
+
+Use `useReducer` when state transitions become complex (for example, several related values that change together).
+
+Do not introduce Context, Redux, Zustand, or another state management library unless there is a demonstrated need.
+
 ## Testing Rules
 
 Important exercise algorithms should have unit tests.
