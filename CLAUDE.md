@@ -1,5 +1,20 @@
 # ArmForm AI — Claude Code Instructions
 
+## Response Language
+
+Always respond in Vietnamese (tiếng Việt).
+
+This applies to every result: explanations, summaries, plans, code reviews, test reports, and error messages shown to the owner.
+
+Keep the following in English:
+
+- source code (identifiers, function names, types);
+- code comments;
+- commit messages;
+- file names and paths;
+- terminal commands;
+- technical terms with no common Vietnamese equivalent (for example `useState`, `MediaStream`, `state machine`).
+
 ## Project Purpose
 
 ArmForm AI is both:
