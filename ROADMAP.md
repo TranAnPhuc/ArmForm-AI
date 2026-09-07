@@ -1,5 +1,10 @@
 # Roadmap
 
+## Status
+
+Milestones 0–7 are complete: the MVP runs end-to-end in the browser, from
+camera to rep counting and session summary.
+
 ## Milestone 0 — Project Foundation
 
 Goal:

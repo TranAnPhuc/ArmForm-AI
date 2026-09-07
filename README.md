@@ -19,6 +19,25 @@ Camera
 → Rep Counting
 → ROM / Tempo / Form Feedback
 
+## Getting Started
+
+```bash
+npm install
+npm run dev
+```
+
+Open the printed local URL, choose LEFT or RIGHT arm, then press Start Workout
+and allow camera access. Stand side-on to the camera so the shoulder, elbow and
+wrist are all visible.
+
+Other commands:
+
+- `npm run test` — unit tests
+- `npm run build` — type-check and production build
+
+The MediaPipe model and WASM runtime are loaded from a CDN on first use, so the
+first start needs an internet connection.
+
 ## Initial Technology Stack
 
 - React
