@@ -5,6 +5,8 @@
  * the next state. No React, no MediaPipe, no camera.
  */
 
+import type { RepMetrics } from "./formEvaluation";
+
 export type CurlPhase = "unknown" | "down" | "lifting" | "up" | "lowering";
 
 export interface CurlThresholds {
@@ -23,13 +25,23 @@ export const DEFAULT_THRESHOLDS: CurlThresholds = {
 export interface CurlState {
   phase: CurlPhase;
   repCount: number;
-  /** When the current phase began, used later for tempo. */
+  /** When the current phase began. */
   phaseStartedAt: number;
   /**
    * Whether the arm has reached the contracted position since the last
    * completed rep. A rep only counts if it did.
    */
   hasReachedUp: boolean;
+  /** Smallest angle seen during the rep in progress. */
+  minAngle: number;
+  /** Largest angle seen during the rep in progress. */
+  maxAngle: number;
+  /** When the arm left the extended position, or null before it did. */
+  liftStartedAt: number | null;
+  /** When the arm first reached the contracted position this rep. */
+  upReachedAt: number | null;
+  /** Metrics of the most recently completed rep, or null before the first. */
+  lastRep: RepMetrics | null;
 }
 
 export interface CurlInput {
@@ -45,6 +57,11 @@ export function createCurlState(timestampMs = 0): CurlState {
     repCount: 0,
     phaseStartedAt: timestampMs,
     hasReachedUp: false,
+    minAngle: Number.POSITIVE_INFINITY,
+    maxAngle: Number.NEGATIVE_INFINITY,
+    liftStartedAt: null,
+    upReachedAt: null,
+    lastRep: null,
   };
 }
 
@@ -65,19 +82,66 @@ export function updateCurlState(
 ): CurlState {
   if (!input.isValid || Number.isNaN(input.angle)) return state;
 
-  const phase = nextPhase(state.phase, input.angle, thresholds);
-  if (phase === state.phase) return state;
+  const { angle, timestampMs } = input;
+  const minAngle = Math.min(state.minAngle, angle);
+  const maxAngle = Math.max(state.maxAngle, angle);
+
+  const phase = nextPhase(state.phase, angle, thresholds);
+
+  // Range of motion accumulates on every valid frame, not only on transitions.
+  if (phase === state.phase) return { ...state, minAngle, maxAngle };
 
   // Entering the contracted position arms the rep; only then can it complete.
   const hasReachedUp = phase === "up" ? true : state.hasReachedUp;
   const completesRep = phase === "down" && hasReachedUp;
 
+  const liftStartedAt =
+    state.phase === "down" && phase !== "down"
+      ? timestampMs
+      : state.liftStartedAt;
+  const upReachedAt =
+    phase === "up" && state.upReachedAt === null
+      ? timestampMs
+      : state.upReachedAt;
+
+  if (!completesRep) {
+    return {
+      ...state,
+      phase,
+      phaseStartedAt: timestampMs,
+      hasReachedUp,
+      minAngle,
+      maxAngle,
+      liftStartedAt,
+      upReachedAt,
+    };
+  }
+
+  const lastRep: RepMetrics = {
+    minAngle,
+    maxAngle,
+    liftingMs: elapsed(liftStartedAt, upReachedAt),
+    loweringMs: elapsed(upReachedAt, timestampMs),
+  };
+
   return {
     phase,
-    repCount: completesRep ? state.repCount + 1 : state.repCount,
-    phaseStartedAt: input.timestampMs,
-    hasReachedUp: completesRep ? false : hasReachedUp,
+    repCount: state.repCount + 1,
+    phaseStartedAt: timestampMs,
+    hasReachedUp: false,
+    // The next rep starts here, so the range restarts from the current angle.
+    minAngle: angle,
+    maxAngle: angle,
+    liftStartedAt: null,
+    upReachedAt: null,
+    lastRep,
   };
+}
+
+/** Duration between two marks, or 0 when either mark was never recorded. */
+function elapsed(from: number | null, to: number | null): number {
+  if (from === null || to === null) return 0;
+  return Math.max(0, to - from);
 }
 
 function nextPhase(

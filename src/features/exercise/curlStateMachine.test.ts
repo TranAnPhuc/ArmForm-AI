@@ -188,3 +188,52 @@ describe("updateCurlState — purity", () => {
     expect(state).toEqual(snapshot);
   });
 });
+
+describe("updateCurlState — rep metrics", () => {
+  it("has no lastRep before the first rep completes", () => {
+    expect(run([160, 100, 40]).lastRep).toBeNull();
+  });
+
+  it("records the angle range of the completed rep", () => {
+    const state = run([160, 100, 40, 100, 160]);
+
+    expect(state.lastRep?.minAngle).toBe(40);
+    expect(state.lastRep?.maxAngle).toBe(160);
+  });
+
+  it("tracks extremes reached between transitions, not only at them", () => {
+    // 35 and 170 occur mid-phase and must still show up in the metrics.
+    const state = run([160, 170, 100, 40, 35, 100, 160]);
+
+    expect(state.lastRep?.minAngle).toBe(35);
+    expect(state.lastRep?.maxAngle).toBe(170);
+  });
+
+  it("measures lifting and lowering durations", () => {
+    // run() advances 100ms per sample: leaves down at index 1, reaches up at
+    // index 2, returns to down at index 4.
+    const state = run([160, 100, 40, 100, 160]);
+
+    expect(state.lastRep?.liftingMs).toBe(100);
+    expect(state.lastRep?.loweringMs).toBe(200);
+  });
+
+  it("resets the range for the next rep", () => {
+    const state = run([160, 100, 40, 100, 160, 150]);
+
+    // The second rep is in progress and has only seen 160 and 150 so far.
+    expect(state.minAngle).toBe(150);
+    expect(state.maxAngle).toBe(160);
+  });
+
+  it("keeps each rep's metrics independent", () => {
+    const first = [160, 100, 40, 100, 160];
+    const second = [100, 60, 100, 155];
+    const state = run([...first, ...second]);
+
+    expect(state.repCount).toBe(2);
+    // The second rep starts from the 160 it ended on, and dipped to 60.
+    expect(state.lastRep?.minAngle).toBe(60);
+    expect(state.lastRep?.maxAngle).toBe(160);
+  });
+});
