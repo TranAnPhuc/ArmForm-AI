@@ -144,3 +144,49 @@ describe("summarizeSession", () => {
     expect(summary.averageRomScore).toBe(75);
   });
 });
+
+describe("evaluateRep — regression F3: unmeasurable tempo", () => {
+  it("does not accuse the user of lifting too fast when lifting was not measured", () => {
+    const result = evaluateRep(repWith({ liftingMs: null }));
+
+    expect(result.issues).not.toContain("lifting-too-fast");
+  });
+
+  it("does not accuse the user of lowering too fast when lowering was not measured", () => {
+    const result = evaluateRep(repWith({ loweringMs: null }));
+
+    expect(result.issues).not.toContain("lowering-too-fast");
+  });
+
+  it("still reports a good rep when only tempo data is missing", () => {
+    const result = evaluateRep(repWith({ liftingMs: null, loweringMs: null }));
+
+    expect(result.issues).toEqual([]);
+    expect(result.message).toBe("Good rep");
+  });
+
+  it("still evaluates range of motion when tempo is missing", () => {
+    const result = evaluateRep(
+      repWith({ liftingMs: null, loweringMs: null, maxAngle: 120 }),
+    );
+
+    expect(result.issues).toEqual(["extend-further"]);
+  });
+
+  it("ignores unmeasured durations when averaging a session", () => {
+    const summary = summarizeSession([
+      repWith({ liftingMs: null, loweringMs: null }),
+      repWith({ liftingMs: 1000, loweringMs: 2000 }),
+    ]);
+
+    expect(summary.averageLiftingMs).toBe(1000);
+    expect(summary.averageLoweringMs).toBe(2000);
+  });
+
+  it("reports null averages when no rep had measurable tempo", () => {
+    const summary = summarizeSession([repWith({ liftingMs: null, loweringMs: null })]);
+
+    expect(summary.averageLiftingMs).toBeNull();
+    expect(summary.averageLoweringMs).toBeNull();
+  });
+});

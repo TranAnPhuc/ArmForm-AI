@@ -411,7 +411,9 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
   );
 }
 
-function formatSeconds(ms: number): string {
+/** Null means the phase was never timed, which is not the same as 0.0s. */
+function formatSeconds(ms: number | null): string {
+  if (ms === null) return "—";
   return `${(ms / 1000).toFixed(1)}s`;
 }
 

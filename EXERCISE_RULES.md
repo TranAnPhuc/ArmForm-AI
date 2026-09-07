@@ -83,6 +83,22 @@ DOWN
 → DOWN
 → REP + 1
 
+### A repetition must begin from DOWN
+
+A repetition represents a complete movement cycle, so the cycle has to start
+somewhere. The arm must have been in the DOWN phase before reaching UP.
+
+If tracking begins while the arm is already contracted, lowering it is only
+half a movement and must not be counted:
+
+UNKNOWN
+→ UP
+→ LOWERING
+→ DOWN
+→ no repetition
+
+The next cycle, which does start from DOWN, counts normally.
+
 ## Range of Motion
 
 A repetition should record:
@@ -116,6 +132,15 @@ Possible feedback:
 - lowering phase too fast.
 
 Tempo rules are advisory only.
+
+### Tempo is evaluated only when it was measured
+
+A phase duration that could not be measured is recorded as null, never as zero.
+
+Null means "not enough data to judge" and is not the same as a movement that
+took no time. Tempo rules skip a phase whose duration is null, so the user is
+never told they moved too fast when the system simply did not observe the
+phase.
 
 ## Pose Confidence
 

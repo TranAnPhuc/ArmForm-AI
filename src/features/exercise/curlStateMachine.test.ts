@@ -237,3 +237,53 @@ describe("updateCurlState — rep metrics", () => {
     expect(state.lastRep?.maxAngle).toBe(160);
   });
 });
+
+describe("updateCurlState — regression F2: rep must begin from DOWN", () => {
+  it("does not count a rep when the session starts with the arm already up", () => {
+    // User picks the dumbbell up already contracted, then lowers it.
+    const state = run([40, 100, 160]);
+
+    expect(state.phase).toBe("down");
+    expect(state.repCount).toBe(0);
+  });
+
+  it("does not count when starting up and dropping straight to down", () => {
+    expect(run([40, 160]).repCount).toBe(0);
+  });
+
+  it("counts the next full cycle after an unqualified start", () => {
+    // Starts up (no rep), lowers to down, then performs one real curl.
+    const state = run([40, 160, 100, 40, 100, 160]);
+
+    expect(state.repCount).toBe(1);
+  });
+
+  it("still counts a normal cycle that begins from down", () => {
+    expect(run([160, 100, 40, 100, 160]).repCount).toBe(1);
+  });
+
+  it("clears the qualification after each counted rep", () => {
+    // Two full cycles must both qualify independently.
+    const state = run([160, 100, 40, 100, 160, 100, 40, 100, 160]);
+
+    expect(state.repCount).toBe(2);
+  });
+});
+
+describe("updateCurlState — regression F3: unmeasurable tempo is null", () => {
+  it("reports null durations when the rep did not start from down", () => {
+    // Reaches down only via the unqualified path, then does a real rep whose
+    // lifting phase is fully measured.
+    const state = run([40, 160, 100, 40, 100, 160]);
+
+    expect(state.lastRep?.liftingMs).not.toBeNull();
+    expect(state.lastRep?.loweringMs).not.toBeNull();
+  });
+
+  it("never reports a zero duration for a rep that was actually performed", () => {
+    const state = run([160, 100, 40, 100, 160]);
+
+    expect(state.lastRep?.liftingMs).toBeGreaterThan(0);
+    expect(state.lastRep?.loweringMs).toBeGreaterThan(0);
+  });
+});

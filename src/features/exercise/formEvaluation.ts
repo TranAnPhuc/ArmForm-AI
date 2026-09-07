@@ -8,10 +8,16 @@ export interface RepMetrics {
   minAngle: number;
   /** Largest elbow angle reached — how far the arm extended. */
   maxAngle: number;
-  /** Milliseconds spent lifting, from leaving "down" to reaching "up". */
-  liftingMs: number;
-  /** Milliseconds spent lowering, from leaving "up" to reaching "down". */
-  loweringMs: number;
+  /**
+   * Milliseconds spent lifting, from leaving "down" to reaching "up".
+   * Null when the phase could not be timed — not the same as zero.
+   */
+  liftingMs: number | null;
+  /**
+   * Milliseconds spent lowering, from leaving "up" to reaching "down".
+   * Null when the phase could not be timed — not the same as zero.
+   */
+  loweringMs: number | null;
 }
 
 export interface FormRules {
@@ -91,8 +97,15 @@ export function evaluateRep(
 
   if (metrics.maxAngle < rules.minExtensionAngle) issues.push("extend-further");
   if (metrics.minAngle > rules.maxContractionAngle) issues.push("curl-higher");
-  if (metrics.liftingMs < rules.minPhaseMs) issues.push("lifting-too-fast");
-  if (metrics.loweringMs < rules.minPhaseMs) issues.push("lowering-too-fast");
+
+  // A tempo rule can only fire on a phase we actually timed. An unmeasured
+  // phase says nothing about how fast the user moved.
+  if (metrics.liftingMs !== null && metrics.liftingMs < rules.minPhaseMs) {
+    issues.push("lifting-too-fast");
+  }
+  if (metrics.loweringMs !== null && metrics.loweringMs < rules.minPhaseMs) {
+    issues.push("lowering-too-fast");
+  }
 
   const message = issues.length === 0
     ? FEEDBACK_MESSAGE["good-rep"]
@@ -109,8 +122,10 @@ export interface SessionSummary {
   totalReps: number;
   goodReps: number;
   averageRomScore: number;
-  averageLiftingMs: number;
-  averageLoweringMs: number;
+  /** Null when no rep in the session had a measurable lifting phase. */
+  averageLiftingMs: number | null;
+  /** Null when no rep in the session had a measurable lowering phase. */
+  averageLoweringMs: number | null;
   bestRomScore: number;
 }
 
@@ -124,8 +139,8 @@ export function summarizeSession(
       totalReps: 0,
       goodReps: 0,
       averageRomScore: 0,
-      averageLiftingMs: 0,
-      averageLoweringMs: 0,
+      averageLiftingMs: null,
+      averageLoweringMs: null,
       bestRomScore: 0,
     };
   }
@@ -137,12 +152,20 @@ export function summarizeSession(
     totalReps: reps.length,
     goodReps: evaluations.filter((e) => e.issues.length === 0).length,
     averageRomScore: Math.round(average(scores)),
-    averageLiftingMs: Math.round(average(reps.map((r) => r.liftingMs))),
-    averageLoweringMs: Math.round(average(reps.map((r) => r.loweringMs))),
+    averageLiftingMs: averageMeasured(reps.map((r) => r.liftingMs)),
+    averageLoweringMs: averageMeasured(reps.map((r) => r.loweringMs)),
     bestRomScore: Math.max(...scores),
   };
 }
 
 function average(values: number[]): number {
   return values.reduce((sum, v) => sum + v, 0) / values.length;
+}
+
+/** Averages only the durations that were actually measured. */
+function averageMeasured(values: (number | null)[]): number | null {
+  const measured = values.filter((v): v is number => v !== null);
+  if (measured.length === 0) return null;
+
+  return Math.round(average(measured));
 }

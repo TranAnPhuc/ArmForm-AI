@@ -32,6 +32,14 @@ export interface CurlState {
    * completed rep. A rep only counts if it did.
    */
   hasReachedUp: boolean;
+  /**
+   * Whether the current cycle actually began from the extended position.
+   *
+   * A rep is a movement cycle, so it has to start somewhere. Picking the
+   * dumbbell up already curled and simply lowering it is half a movement, not
+   * a rep, and must not be counted.
+   */
+  hasStartedFromDown: boolean;
   /** Smallest angle seen during the rep in progress. */
   minAngle: number;
   /** Largest angle seen during the rep in progress. */
@@ -57,6 +65,7 @@ export function createCurlState(timestampMs = 0): CurlState {
     repCount: 0,
     phaseStartedAt: timestampMs,
     hasReachedUp: false,
+    hasStartedFromDown: false,
     minAngle: Number.POSITIVE_INFINITY,
     maxAngle: Number.NEGATIVE_INFINITY,
     liftStartedAt: null,
@@ -93,7 +102,14 @@ export function updateCurlState(
 
   // Entering the contracted position arms the rep; only then can it complete.
   const hasReachedUp = phase === "up" ? true : state.hasReachedUp;
-  const completesRep = phase === "down" && hasReachedUp;
+
+  // Read both qualifications from the PREVIOUS state: arriving at "down" is
+  // what may complete a rep, so it cannot also be what qualifies it to start.
+  const completesRep =
+    phase === "down" && state.hasReachedUp && state.hasStartedFromDown;
+
+  const hasStartedFromDown =
+    phase === "down" ? true : state.hasStartedFromDown;
 
   const liftStartedAt =
     state.phase === "down" && phase !== "down"
@@ -110,6 +126,7 @@ export function updateCurlState(
       phase,
       phaseStartedAt: timestampMs,
       hasReachedUp,
+      hasStartedFromDown,
       minAngle,
       maxAngle,
       liftStartedAt,
@@ -129,6 +146,8 @@ export function updateCurlState(
     repCount: state.repCount + 1,
     phaseStartedAt: timestampMs,
     hasReachedUp: false,
+    // We are in "down" right now, so the next cycle is already qualified.
+    hasStartedFromDown: true,
     // The next rep starts here, so the range restarts from the current angle.
     minAngle: angle,
     maxAngle: angle,
@@ -138,9 +157,15 @@ export function updateCurlState(
   };
 }
 
-/** Duration between two marks, or 0 when either mark was never recorded. */
-function elapsed(from: number | null, to: number | null): number {
-  if (from === null || to === null) return 0;
+/**
+ * Duration between two marks, or null when either mark was never recorded.
+ *
+ * Null means "not enough data to judge", which is different from a real
+ * duration of zero. Collapsing the two would make an unmeasured phase look
+ * infinitely fast and trigger a bogus tempo warning.
+ */
+function elapsed(from: number | null, to: number | null): number | null {
+  if (from === null || to === null) return null;
   return Math.max(0, to - from);
 }
 
