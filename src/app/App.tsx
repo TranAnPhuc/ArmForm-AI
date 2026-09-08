@@ -18,24 +18,16 @@ import {
   summarizeWorkout,
   workoutReducer,
 } from "../features/workout/workoutSession";
-import {
-  useWorkoutLoop,
-  type TrackingStatus,
-} from "../features/workout/useWorkoutLoop";
+import { useWorkoutLoop } from "../features/workout/useWorkoutLoop";
 import { RepList } from "../components/RepList";
 import { SetList } from "../components/SetList";
+import { SetupGuide } from "../components/SetupGuide";
+import { TrackingIndicator } from "../components/TrackingIndicator";
 // TEMPORARY — left-arm investigation. Remove with armDiagnostics.ts.
 import * as armDiagnostics from "../features/pose/armDiagnostics";
 
 /** How long one diagnostic run records for. Long enough for five reps. */
 const DIAGNOSTIC_SECONDS = 20;
-
-const TRACKING_MESSAGE: Record<TrackingStatus, string> = {
-  idle: "",
-  "no-person": "No person detected. Step into the camera view.",
-  "arm-unclear": "Arm not clearly visible. Turn side-on to the camera.",
-  tracking: "Tracking",
-};
 
 const PHASE_LABEL: Record<CurlPhase, string> = {
   unknown: "—",
@@ -197,6 +189,7 @@ function App() {
             key={option}
             type="button"
             onClick={() => selectSide(option)}
+            aria-pressed={side === option}
             className={`rounded-md px-4 py-2 text-sm font-medium capitalize ${
               side === option
                 ? "bg-slate-200 text-slate-900"
@@ -260,12 +253,14 @@ function App() {
         />
         <canvas
           ref={canvasRef}
+          // Decorative: it repeats what the video already shows.
+          aria-hidden="true"
           className="absolute inset-0 h-full w-full rounded-lg"
         />
         {camera.isActive && (
-          <span className="absolute left-3 top-3 rounded bg-slate-950/80 px-2 py-1 text-xs text-slate-300">
-            {TRACKING_MESSAGE[loop.trackingStatus]}
-          </span>
+          <div className="absolute left-3 top-3">
+            <TrackingIndicator status={loop.trackingStatus} />
+          </div>
         )}
       </div>
 
@@ -301,7 +296,11 @@ function App() {
         </section>
       ) : (
         loop.display.feedback !== null && (
-          <p className="text-center text-base font-medium text-indigo-300">
+          <p
+            role="status"
+            aria-live="polite"
+            className="text-center text-base font-medium text-indigo-300"
+          >
             {loop.display.feedback}
             {loop.display.romScore !== null && (
               <span className="ml-2 text-sm text-slate-400">
@@ -354,7 +353,15 @@ function App() {
         </button>
       )}
 
-      {notice !== null && <p className="text-sm text-amber-300">{notice}</p>}
+      {/* Only before the first workout: once reps exist, the screen has more
+          useful things to show than instructions the user has already followed. */}
+      {!camera.isActive && workout.phase === "idle" && <SetupGuide />}
+
+      {notice !== null && (
+        <p role="status" aria-live="polite" className="text-sm text-amber-300">
+          {notice}
+        </p>
+      )}
 
       {error !== null && <p className="text-sm text-red-400">{error}</p>}
 
