@@ -1,6 +1,7 @@
 import { describe, expect, it } from "vitest";
 import {
   createCurlState,
+  curlDepthPercent,
   updateCurlState,
   type CurlState,
 } from "./curlStateMachine";
@@ -288,5 +289,42 @@ describe("updateCurlState — regression F3: unmeasurable tempo is null", () => 
 
     expect(state.lastRep?.liftingMs).toBeGreaterThan(0);
     expect(state.lastRep?.loweringMs).toBeGreaterThan(0);
+  });
+});
+
+describe("curlDepthPercent", () => {
+  it("reports nothing when the angle is unknown", () => {
+    expect(curlDepthPercent(null)).toBeNull();
+    expect(curlDepthPercent(Number.NaN)).toBeNull();
+  });
+
+  it("is 0 at the extended threshold", () => {
+    expect(curlDepthPercent(145)).toBe(0);
+  });
+
+  it("is 100 at the contracted threshold", () => {
+    expect(curlDepthPercent(65)).toBe(100);
+  });
+
+  it("is 50 halfway between the thresholds", () => {
+    expect(curlDepthPercent(105)).toBe(50);
+  });
+
+  it("clamps a fully extended arm to 0 rather than going negative", () => {
+    expect(curlDepthPercent(180)).toBe(0);
+  });
+
+  it("clamps a deeper-than-required curl to 100", () => {
+    expect(curlDepthPercent(30)).toBe(100);
+  });
+
+  it("shows a curl that stops short as under 100", () => {
+    // The measured left-arm failures hovered around 70-80 degrees.
+    expect(curlDepthPercent(75)).toBeLessThan(100);
+    expect(curlDepthPercent(75)).toBeGreaterThan(80);
+  });
+
+  it("honours custom thresholds", () => {
+    expect(curlDepthPercent(100, { downAngle: 150, upAngle: 50 })).toBe(50);
   });
 });

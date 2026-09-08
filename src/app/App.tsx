@@ -3,7 +3,10 @@ import { describeStartError } from "../features/camera/cameraErrors";
 import { isCameraSupported, useCamera } from "../features/camera/useCamera";
 import type { ArmSide } from "../features/pose/landmarks";
 import { usePoseLandmarker } from "../features/pose/usePoseLandmarker";
-import type { CurlPhase } from "../features/exercise/curlStateMachine";
+import {
+  curlDepthPercent,
+  type CurlPhase,
+} from "../features/exercise/curlStateMachine";
 import { resizeCanvasToVideo } from "../features/workout/canvasOverlay";
 import { formatCountdown, formatSeconds } from "../features/workout/duration";
 import {
@@ -21,6 +24,7 @@ import {
 import { useWorkoutLoop } from "../features/workout/useWorkoutLoop";
 import { RepList } from "../components/RepList";
 import { SetList } from "../components/SetList";
+import { CurlDepthMeter } from "../components/CurlDepthMeter";
 import { SetupGuide } from "../components/SetupGuide";
 import { TrackingIndicator } from "../components/TrackingIndicator";
 // TEMPORARY — left-arm investigation. Remove with armDiagnostics.ts.
@@ -277,6 +281,15 @@ function App() {
         />
         <Stat label="Phase" value={PHASE_LABEL[loop.display.phase]} />
       </section>
+
+      {/* Only while a set is running: during rest the arm moves for reasons
+          that have nothing to do with the exercise. */}
+      {workout.phase === "working" && (
+        <CurlDepthMeter
+          depthPercent={curlDepthPercent(loop.display.angle)}
+          phase={loop.display.phase}
+        />
+      )}
 
       {workout.phase === "resting" ? (
         <section className="flex w-full max-w-xl flex-col items-center gap-2 rounded-lg border border-slate-800 p-4">

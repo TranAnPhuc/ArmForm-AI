@@ -168,6 +168,30 @@ function elapsed(from: number | null, to: number | null): number | null {
   return Math.max(0, to - from);
 }
 
+/**
+ * How far through the curl the arm is right now, as a percentage.
+ *
+ * 0 at the extended threshold, 100 at the contracted one. This is what the
+ * counting rules look like from the user's side: a curl that stops at 80% is
+ * a curl that will not be counted, and without seeing that number there is no
+ * way to know why a rep did not register.
+ *
+ * Reporting only, never fed back into the state machine.
+ */
+export function curlDepthPercent(
+  angle: number | null,
+  thresholds: CurlThresholds = DEFAULT_THRESHOLDS,
+): number | null {
+  if (angle === null || Number.isNaN(angle)) return null;
+
+  const span = thresholds.downAngle - thresholds.upAngle;
+  if (span <= 0) return null;
+
+  const progress = (thresholds.downAngle - angle) / span;
+
+  return Math.round(Math.min(1, Math.max(0, progress)) * 100);
+}
+
 function nextPhase(
   current: CurlPhase,
   angle: number,
