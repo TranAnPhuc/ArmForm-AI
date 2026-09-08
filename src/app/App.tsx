@@ -12,7 +12,6 @@ import {
   type CurlState,
 } from "../features/exercise/curlStateMachine";
 import {
-  evaluateRep,
   summarizeSession,
   type RepMetrics,
   type SessionSummary,
@@ -22,6 +21,14 @@ import {
   drawArm,
   resizeCanvasToVideo,
 } from "../features/workout/canvasOverlay";
+import { formatSeconds } from "../features/workout/duration";
+import { createRepEntry, type RepEntry } from "../features/workout/repHistory";
+import {
+  formatWeightKg,
+  MAX_WEIGHT_KG,
+  parseWeightKg,
+} from "../features/workout/weight";
+import { RepList } from "../components/RepList";
 
 /** The angle changes every frame; refreshing the readout ~10x a second is
  * plenty for a human to read and keeps React out of the detection loop. */
@@ -71,6 +78,13 @@ function App() {
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>("idle");
   const [display, setDisplay] = useState<WorkoutDisplay>(EMPTY_DISPLAY);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
+  const [repHistory, setRepHistory] = useState<RepEntry[]>([]);
+
+  // The raw text, not the number: the user must be able to type "1" on the way
+  // to "12" without the field rejecting the keystroke.
+  const [weightInput, setWeightInput] = useState("");
+  const weightKg = parseWeightKg(weightInput);
+  const hasWeightError = weightInput.trim() !== "" && weightKg === null;
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
   const rafIdRef = useRef<number | null>(null);
@@ -93,12 +107,15 @@ function App() {
     sideRef.current = side;
   }, [side]);
 
+  // The weight is deliberately left alone: it describes the dumbbell in the
+  // user's hand, which a reset does not change.
   function resetWorkout() {
     curlStateRef.current = createCurlState(performance.now());
     repsRef.current = [];
     lastUiUpdateRef.current = 0;
     setDisplay(EMPTY_DISPLAY);
     setSummary(null);
+    setRepHistory([]);
   }
 
   function selectSide(next: ArmSide) {
@@ -202,8 +219,18 @@ function App() {
     curlStateRef.current = next;
 
     const repCompleted = next.repCount > previous.repCount;
+
+    // `repsRef` remains the source of truth for the session summary: this loop
+    // reads it synchronously on the next frame, where React state would still
+    // hold the previous value. `repHistory` is the same reps in the form the
+    // list can render — a deliberate duplication, not an accident.
+    let completed: RepEntry | null = null;
     if (repCompleted && next.lastRep) {
       repsRef.current.push(next.lastRep);
+
+      const entry = createRepEntry(next.repCount, next.lastRep);
+      completed = entry;
+      setRepHistory((current) => [...current, entry]);
     }
 
     // Reps and phase changes surface immediately; the angle readout is throttled.
@@ -214,8 +241,7 @@ function App() {
 
     if (shouldRefresh) {
       lastUiUpdateRef.current = now;
-      const evaluation =
-        repCompleted && next.lastRep ? evaluateRep(next.lastRep) : null;
+      const evaluation = completed?.evaluation ?? null;
 
       setDisplay((current) => ({
         angle,
@@ -267,7 +293,30 @@ function App() {
             {option} arm
           </button>
         ))}
+
+        <label className="flex items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm text-slate-300">
+          <span>Weight</span>
+          <input
+            type="number"
+            inputMode="decimal"
+            min={0}
+            max={MAX_WEIGHT_KG}
+            step={0.5}
+            value={weightInput}
+            onChange={(event) => setWeightInput(event.target.value)}
+            placeholder="—"
+            aria-label="Weight in kilograms"
+            className="w-20 rounded bg-slate-900 px-2 py-1 text-right tabular-nums text-slate-100 outline-none focus:ring-1 focus:ring-indigo-500"
+          />
+          <span>kg</span>
+        </label>
       </div>
+
+      {hasWeightError && (
+        <p className="text-sm text-amber-300">
+          Enter a weight between 0 and {MAX_WEIGHT_KG} kg, or leave it blank.
+        </p>
+      )}
 
       <div
         className="relative w-full max-w-xl"
@@ -322,6 +371,8 @@ function App() {
 
       {error !== null && <p className="text-sm text-red-400">{error}</p>}
 
+      <RepList entries={repHistory} />
+
       {summary !== null && summary.totalReps > 0 && (
         <section className="w-full max-w-xl rounded-lg border border-slate-800 p-4">
           <h2 className="mb-3 text-lg font-semibold">Session summary</h2>
@@ -341,6 +392,7 @@ function App() {
               label="Avg lowering"
               value={formatSeconds(summary.averageLoweringMs)}
             />
+            <SummaryRow label="Weight" value={formatWeightKg(weightKg)} />
           </dl>
         </section>
       )}
@@ -370,12 +422,6 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
       <dd className="font-medium tabular-nums">{value}</dd>
     </div>
   );
-}
-
-/** Null means the phase was never timed, which is not the same as 0.0s. */
-function formatSeconds(ms: number | null): string {
-  if (ms === null) return "—";
-  return `${(ms / 1000).toFixed(1)}s`;
 }
 
 export default App;
