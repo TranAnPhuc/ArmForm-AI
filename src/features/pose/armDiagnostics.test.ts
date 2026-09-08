@@ -8,6 +8,7 @@
 import { describe, expect, it } from "vitest";
 import {
   analyzeArmFrame,
+  isDebugMode,
   formatSummary,
   summarizeDiagnostic,
   type FrameSample,
@@ -273,5 +274,26 @@ describe("formatSummary", () => {
     expect(text).toContain("Arm: LEFT");
     expect(text).toContain("UP lost to gate:        1");
     expect(text).toContain("Reps counted: 1");
+  });
+});
+
+describe("isDebugMode", () => {
+  it("is off by default", () => {
+    expect(isDebugMode("")).toBe(false);
+  });
+
+  it("is on with ?debug=true", () => {
+    expect(isDebugMode("?debug=true")).toBe(true);
+  });
+
+  it("stays off for any other value", () => {
+    expect(isDebugMode("?debug=1")).toBe(false);
+    expect(isDebugMode("?debug=false")).toBe(false);
+    expect(isDebugMode("?debug")).toBe(false);
+  });
+
+  it("ignores unrelated parameters", () => {
+    expect(isDebugMode("?arm=left")).toBe(false);
+    expect(isDebugMode("?arm=left&debug=true")).toBe(true);
   });
 });

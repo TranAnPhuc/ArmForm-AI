@@ -332,8 +332,9 @@ function App() {
         )}
       </div>
 
-      {/* TEMPORARY diagnostic control — remove with armDiagnostics.ts. */}
-      {camera.isActive && (
+      {/* TEMPORARY diagnostic control — remove with armDiagnostics.ts.
+          Hidden unless the page is opened with ?debug=true. */}
+      {camera.isActive && armDiagnostics.isDebugMode() && (
         <button
           type="button"
           disabled={isDiagnosing}

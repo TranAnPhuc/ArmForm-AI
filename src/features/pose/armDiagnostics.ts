@@ -3,6 +3,10 @@
  * Delete once the root cause is proven. To remove: delete this file and its
  * test, then `grep -rn "armDiagnostics" src/`.
  *
+ * To use it: open the app with `?debug=true` — for example
+ * http://localhost:5173/?debug=true — and a "Diagnose … arm" button appears
+ * once the camera is running. Without that parameter the tool is invisible.
+ *
  * The question it exists to answer: when a rep is missed, which stage lost it?
  *
  *   landmarks -> visibility gate -> pixels -> angle -> state machine -> rep
@@ -24,6 +28,19 @@ import type { FrameSize, PoseLandmark } from "./poseEngine";
 
 /** Samples from the first moments are noisy: the model is still warming up. */
 const WARMUP_MS = 500;
+
+/**
+ * Whether the diagnostic controls should be offered at all.
+ *
+ * Gated behind `?debug=true` so an investigation tool does not sit in the way
+ * of someone trying to do a workout. The search string is a parameter rather
+ * than read straight from `window`, which keeps this testable.
+ */
+export function isDebugMode(
+  search: string = typeof window === "undefined" ? "" : window.location.search,
+): boolean {
+  return new URLSearchParams(search).get("debug") === "true";
+}
 
 export type GateResult = "pass" | "reject" | "no-pose";
 export type BlockingLandmark = "shoulder" | "elbow" | "wrist" | "multiple";
