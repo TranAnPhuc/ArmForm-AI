@@ -2,23 +2,10 @@ import { useEffect, useReducer, useRef, useState } from "react";
 import { describeStartError } from "../features/camera/cameraErrors";
 import { isCameraSupported, useCamera } from "../features/camera/useCamera";
 import type { ArmSide } from "../features/pose/landmarks";
-import { readArm, type ArmTrackingStatus } from "../features/pose/poseEngine";
 import { usePoseLandmarker } from "../features/pose/usePoseLandmarker";
-import { calculateAngle } from "../features/exercise/angle";
-import {
-  createCurlState,
-  updateCurlState,
-  type CurlPhase,
-  type CurlState,
-} from "../features/exercise/curlStateMachine";
-import type { RepMetrics } from "../features/exercise/formEvaluation";
-import {
-  clearCanvas,
-  drawArm,
-  resizeCanvasToVideo,
-} from "../features/workout/canvasOverlay";
+import type { CurlPhase } from "../features/exercise/curlStateMachine";
+import { resizeCanvasToVideo } from "../features/workout/canvasOverlay";
 import { formatCountdown, formatSeconds } from "../features/workout/duration";
-import { createRepEntry, type RepEntry } from "../features/workout/repHistory";
 import {
   formatWeightKg,
   MAX_WEIGHT_KG,
@@ -30,17 +17,13 @@ import {
   REST_OPTIONS_MS,
   summarizeWorkout,
   workoutReducer,
-  type WorkoutPhase,
 } from "../features/workout/workoutSession";
+import {
+  useWorkoutLoop,
+  type TrackingStatus,
+} from "../features/workout/useWorkoutLoop";
 import { RepList } from "../components/RepList";
 import { SetList } from "../components/SetList";
-
-/** The angle changes every frame; refreshing the readout ~10x a second is
- * plenty for a human to read and keeps React out of the detection loop. */
-const UI_REFRESH_MS = 100;
-
-/** "idle" is a UI state, not a tracking result: the workout has not started. */
-type TrackingStatus = ArmTrackingStatus | "idle";
 
 const TRACKING_MESSAGE: Record<TrackingStatus, string> = {
   idle: "",
@@ -57,22 +40,6 @@ const PHASE_LABEL: Record<CurlPhase, string> = {
   lowering: "Lowering",
 };
 
-interface WorkoutDisplay {
-  angle: number | null;
-  phase: CurlPhase;
-  repCount: number;
-  feedback: string | null;
-  romScore: number | null;
-}
-
-const EMPTY_DISPLAY: WorkoutDisplay = {
-  angle: null,
-  phase: "unknown",
-  repCount: 0,
-  feedback: null,
-  romScore: null,
-};
-
 /** How often the rest countdown is recomputed. Finer than the second it shows,
  * so the displayed value never lags a full second behind. */
 const REST_TICK_MS = 250;
@@ -84,9 +51,6 @@ function App() {
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [side, setSide] = useState<ArmSide>("right");
-  const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>("idle");
-  const [display, setDisplay] = useState<WorkoutDisplay>(EMPTY_DISPLAY);
-  const [repHistory, setRepHistory] = useState<RepEntry[]>([]);
 
   // Phase, set number, recorded sets and the rest deadline only make sense
   // together, so they move as one — the case CLAUDE.md reserves useReducer for.
@@ -94,39 +58,24 @@ function App() {
   const [restMs, setRestMs] = useState(DEFAULT_REST_MS);
   const [notice, setNotice] = useState<string | null>(null);
 
+  const canvasRef = useRef<HTMLCanvasElement | null>(null);
+
+  // This screen decides *when* reps count; the loop decides *how* a frame
+  // becomes one. Rest is the whole difference: the arm still moves, but none
+  // of that movement is exercise.
+  const loop = useWorkoutLoop({
+    videoRef: camera.videoRef,
+    canvasRef,
+    landmarkerRef: landmarker.landmarkerRef,
+    side,
+    isCounting: workout.phase === "working",
+  });
+
   // The raw text, not the number: the user must be able to type "1" on the way
   // to "12" without the field rejecting the keystroke.
   const [weightInput, setWeightInput] = useState("");
   const weightKg = parseWeightKg(weightInput);
   const hasWeightError = weightInput.trim() !== "" && weightKg === null;
-
-  const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const rafIdRef = useRef<number | null>(null);
-
-  // requestAnimationFrame runs at ~60fps but a webcam delivers ~30fps, so half
-  // the ticks would re-detect an already-processed frame under a new timestamp
-  // and make MediaPipe invent motion that never happened.
-  const lastFrameTimeRef = useRef(-1);
-
-  // Exercise state lives in a ref, not React state: it updates every frame and
-  // the detection loop must read the current value, never a stale closure.
-  const curlStateRef = useRef<CurlState>(createCurlState());
-  const repsRef = useRef<RepMetrics[]>([]);
-  const lastUiUpdateRef = useRef(0);
-
-  // The animation loop is created once and would otherwise close over a stale
-  // `side`, so it reads the current value through a ref instead.
-  const sideRef = useRef<ArmSide>(side);
-  useEffect(() => {
-    sideRef.current = side;
-  }, [side]);
-
-  // Same reason: the loop must know whether reps currently count, and during
-  // rest they must not — putting the dumbbell down is not a repetition.
-  const workoutPhaseRef = useRef<WorkoutPhase>(workout.phase);
-  useEffect(() => {
-    workoutPhaseRef.current = workout.phase;
-  }, [workout.phase]);
 
   // A rest is a deadline, so one interval is enough: however late a tick
   // arrives, the reducer works out the truth from the clock it is handed.
@@ -141,25 +90,16 @@ function App() {
     return () => clearInterval(id);
   }, [workout.phase]);
 
-  /** Clears everything about the current set. */
-  function resetSet() {
-    curlStateRef.current = createCurlState(performance.now());
-    repsRef.current = [];
-    lastUiUpdateRef.current = 0;
-    setDisplay(EMPTY_DISPLAY);
-    setRepHistory([]);
-  }
-
   // The weight is deliberately left alone: it describes the dumbbell in the
   // user's hand, which a reset does not change.
   function resetWorkout() {
-    resetSet();
+    loop.resetSet();
     setNotice(null);
     dispatch({ type: "reset" });
   }
 
   function finishSet() {
-    if (repsRef.current.length === 0) {
+    if (loop.repsRef.current.length === 0) {
       setNotice("Complete a rep before finishing the set.");
       return;
     }
@@ -168,10 +108,10 @@ function App() {
     dispatch({
       type: "finish-set",
       now: performance.now(),
-      reps: repsRef.current,
+      reps: loop.repsRef.current,
       restMs,
     });
-    resetSet();
+    loop.resetSet();
   }
 
   function skipRest() {
@@ -203,7 +143,7 @@ function App() {
       await landmarker.ensureLoaded();
 
       dispatch({ type: "start" });
-      rafIdRef.current = requestAnimationFrame(detectFrame);
+      loop.start();
     } catch (err) {
       // The camera may already be live when the model fails to load, so release
       // it rather than leaving the light on with nothing reading the frames.
@@ -215,132 +155,14 @@ function App() {
   }
 
   function stopWorkout() {
-    if (rafIdRef.current !== null) {
-      cancelAnimationFrame(rafIdRef.current);
-      rafIdRef.current = null;
-    }
-    lastFrameTimeRef.current = -1;
-
+    loop.stop();
     camera.stop();
-    clearCanvas(canvasRef.current);
 
-    setTrackingStatus("idle");
     setNotice(null);
     // Reps done since the last rest belong to a set nobody finished; the
     // reducer banks them so they are not silently lost.
-    dispatch({ type: "finish-workout", reps: repsRef.current });
+    dispatch({ type: "finish-workout", reps: loop.repsRef.current });
   }
-
-  function detectFrame() {
-    const video = camera.videoRef.current;
-    const canvas = canvasRef.current;
-    const detector = landmarker.landmarkerRef.current;
-    const ctx = canvas?.getContext("2d");
-
-    if (!video || !canvas || !detector || !ctx || video.readyState < 2) {
-      rafIdRef.current = requestAnimationFrame(detectFrame);
-      return;
-    }
-
-    // Same video frame as last tick: nothing new to detect, leave the overlay as is.
-    if (video.currentTime === lastFrameTimeRef.current) {
-      rafIdRef.current = requestAnimationFrame(detectFrame);
-      return;
-    }
-    lastFrameTimeRef.current = video.currentTime;
-
-    const now = performance.now();
-    const result = detector.detectForVideo(video, now);
-    ctx.clearRect(0, 0, canvas.width, canvas.height);
-
-    // Per-frame landmarks stay local: nothing outside this tick reads them,
-    // so they never touch state or a ref.
-    const reading = readArm(result.landmarks[0], sideRef.current, {
-      width: canvas.width,
-      height: canvas.height,
-    });
-    setTrackingStatus(reading.status);
-
-    let angle: number | null = null;
-    let isValid = false;
-
-    if (reading.points) {
-      drawArm(ctx, reading.points);
-      angle = calculateAngle(
-        reading.points[0],
-        reading.points[1],
-        reading.points[2],
-      );
-      isValid = !Number.isNaN(angle);
-    }
-
-    // Reps only count while a set is under way. During rest the arm still moves
-    // — racking the dumbbell, reaching for a drink — and none of that is
-    // exercise, so the state machine must not see those frames at all.
-    if (workoutPhaseRef.current !== "working") {
-      if (now - lastUiUpdateRef.current >= UI_REFRESH_MS) {
-        lastUiUpdateRef.current = now;
-        setDisplay((current) => ({ ...current, angle }));
-      }
-
-      rafIdRef.current = requestAnimationFrame(detectFrame);
-      return;
-    }
-
-    const previous = curlStateRef.current;
-    const next = updateCurlState(previous, {
-      angle: angle ?? Number.NaN,
-      timestampMs: now,
-      isValid,
-    });
-    curlStateRef.current = next;
-
-    const repCompleted = next.repCount > previous.repCount;
-
-    // `repsRef` remains the source of truth for the session summary: this loop
-    // reads it synchronously on the next frame, where React state would still
-    // hold the previous value. `repHistory` is the same reps in the form the
-    // list can render — a deliberate duplication, not an accident.
-    let completed: RepEntry | null = null;
-    if (repCompleted && next.lastRep) {
-      repsRef.current.push(next.lastRep);
-
-      const entry = createRepEntry(next.repCount, next.lastRep);
-      completed = entry;
-      setRepHistory((current) => [...current, entry]);
-    }
-
-    // Reps and phase changes surface immediately; the angle readout is throttled.
-    const shouldRefresh =
-      repCompleted ||
-      next.phase !== previous.phase ||
-      now - lastUiUpdateRef.current >= UI_REFRESH_MS;
-
-    if (shouldRefresh) {
-      lastUiUpdateRef.current = now;
-      const evaluation = completed?.evaluation ?? null;
-
-      setDisplay((current) => ({
-        angle,
-        phase: next.phase,
-        repCount: next.repCount,
-        feedback: evaluation ? evaluation.message : current.feedback,
-        romScore: evaluation ? evaluation.romScore : current.romScore,
-      }));
-    }
-
-    rafIdRef.current = requestAnimationFrame(detectFrame);
-  }
-
-  // The camera stream and the landmarker are released by the hooks that own
-  // them; the only resource this screen owns is the animation loop.
-  useEffect(() => {
-    return () => {
-      if (rafIdRef.current !== null) {
-        cancelAnimationFrame(rafIdRef.current);
-      }
-    };
-  }, []);
 
   // Derived, not stored: the summary is only ever a view of the recorded sets,
   // and a second copy could disagree with them.
@@ -435,19 +257,23 @@ function App() {
         />
         {camera.isActive && (
           <span className="absolute left-3 top-3 rounded bg-slate-950/80 px-2 py-1 text-xs text-slate-300">
-            {TRACKING_MESSAGE[trackingStatus]}
+            {TRACKING_MESSAGE[loop.trackingStatus]}
           </span>
         )}
       </div>
 
       <section className="grid w-full max-w-xl grid-cols-2 gap-2 text-center sm:grid-cols-4">
         <Stat label="Set" value={String(workout.setNumber)} />
-        <Stat label="Reps" value={String(display.repCount)} />
+        <Stat label="Reps" value={String(loop.display.repCount)} />
         <Stat
           label="Elbow angle"
-          value={display.angle === null ? "—" : `${Math.round(display.angle)}°`}
+          value={
+            loop.display.angle === null
+              ? "—"
+              : `${Math.round(loop.display.angle)}°`
+          }
         />
-        <Stat label="Phase" value={PHASE_LABEL[display.phase]} />
+        <Stat label="Phase" value={PHASE_LABEL[loop.display.phase]} />
       </section>
 
       {workout.phase === "resting" ? (
@@ -467,12 +293,12 @@ function App() {
           </button>
         </section>
       ) : (
-        display.feedback !== null && (
+        loop.display.feedback !== null && (
           <p className="text-center text-base font-medium text-indigo-300">
-            {display.feedback}
-            {display.romScore !== null && (
+            {loop.display.feedback}
+            {loop.display.romScore !== null && (
               <span className="ml-2 text-sm text-slate-400">
-                ROM {display.romScore}%
+                ROM {loop.display.romScore}%
               </span>
             )}
           </p>
@@ -506,7 +332,7 @@ function App() {
 
       <SetList sets={workout.completedSets} />
 
-      <RepList entries={repHistory} />
+      <RepList entries={loop.repHistory} />
 
       {summary !== null && summary.totalReps > 0 && (
         <section className="w-full max-w-xl rounded-lg border border-slate-800 p-4">
