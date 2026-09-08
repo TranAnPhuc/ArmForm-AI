@@ -1,15 +1,10 @@
 import { useEffect, useRef, useState } from "react";
-import {
-  FilesetResolver,
-  PoseLandmarker,
-  type NormalizedLandmark,
-} from "@mediapipe/tasks-vision";
-import {
-  ARM_LANDMARKS,
-  MIN_VISIBILITY,
-  type ArmSide,
-} from "../features/pose/landmarks";
-import { calculateAngle, type Point2D } from "../features/exercise/angle";
+import { describeStartError } from "../features/camera/cameraErrors";
+import { isCameraSupported, useCamera } from "../features/camera/useCamera";
+import type { ArmSide } from "../features/pose/landmarks";
+import { readArm, type ArmTrackingStatus } from "../features/pose/poseEngine";
+import { usePoseLandmarker } from "../features/pose/usePoseLandmarker";
+import { calculateAngle } from "../features/exercise/angle";
 import {
   createCurlState,
   updateCurlState,
@@ -22,17 +17,18 @@ import {
   type RepMetrics,
   type SessionSummary,
 } from "../features/exercise/formEvaluation";
-
-const WASM_PATH =
-  "https://cdn.jsdelivr.net/npm/@mediapipe/tasks-vision@1.0.1/wasm";
-const MODEL_PATH =
-  "https://storage.googleapis.com/mediapipe-models/pose_landmarker/pose_landmarker_full/float16/1/pose_landmarker_full.task";
+import {
+  clearCanvas,
+  drawArm,
+  resizeCanvasToVideo,
+} from "../features/workout/canvasOverlay";
 
 /** The angle changes every frame; refreshing the readout ~10x a second is
  * plenty for a human to read and keeps React out of the detection loop. */
 const UI_REFRESH_MS = 100;
 
-type TrackingStatus = "idle" | "no-person" | "arm-unclear" | "tracking";
+/** "idle" is a UI state, not a tracking result: the workout has not started. */
+type TrackingStatus = ArmTrackingStatus | "idle";
 
 const TRACKING_MESSAGE: Record<TrackingStatus, string> = {
   idle: "",
@@ -66,21 +62,17 @@ const EMPTY_DISPLAY: WorkoutDisplay = {
 };
 
 function App() {
-  const [isCameraOn, setIsCameraOn] = useState(false);
+  const camera = useCamera();
+  const landmarker = usePoseLandmarker();
+
   const [isStarting, setIsStarting] = useState(false);
   const [error, setError] = useState<string | null>(null);
   const [side, setSide] = useState<ArmSide>("right");
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>("idle");
-  // Webcams are usually 4:3, not 16:9. Matching the frame to the real video
-  // ratio keeps the canvas overlay aligned with what the user sees.
-  const [aspectRatio, setAspectRatio] = useState(16 / 9);
   const [display, setDisplay] = useState<WorkoutDisplay>(EMPTY_DISPLAY);
   const [summary, setSummary] = useState<SessionSummary | null>(null);
 
-  const videoRef = useRef<HTMLVideoElement | null>(null);
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
-  const streamRef = useRef<MediaStream | null>(null);
-  const poseLandmarkerRef = useRef<PoseLandmarker | null>(null);
   const rafIdRef = useRef<number | null>(null);
 
   // requestAnimationFrame runs at ~60fps but a webcam delivers ~30fps, so half
@@ -116,10 +108,10 @@ function App() {
     resetWorkout();
   }
 
-  async function startCamera() {
+  async function startWorkout() {
     setError(null);
 
-    if (!navigator.mediaDevices?.getUserMedia) {
+    if (!isCameraSupported()) {
       setError("Camera is not supported by this browser or connection.");
       return;
     }
@@ -128,64 +120,43 @@ function App() {
     resetWorkout();
 
     try {
-      const stream = await navigator.mediaDevices.getUserMedia({ video: true });
-      streamRef.current = stream;
+      const video = await camera.start();
+      resizeCanvasToVideo(canvasRef.current, video);
 
-      const video = videoRef.current;
-      if (!video) return;
+      await landmarker.ensureLoaded();
 
-      video.srcObject = stream;
-      await waitForVideoReady(video);
-
-      const canvas = canvasRef.current;
-      if (canvas) {
-        canvas.width = video.videoWidth;
-        canvas.height = video.videoHeight;
-      }
-
-      if (video.videoHeight > 0) {
-        setAspectRatio(video.videoWidth / video.videoHeight);
-      }
-
-      poseLandmarkerRef.current ??= await createPoseLandmarker();
-
-      setIsCameraOn(true);
       rafIdRef.current = requestAnimationFrame(detectFrame);
     } catch (err) {
+      // The camera may already be live when the model fails to load, so release
+      // it rather than leaving the light on with nothing reading the frames.
+      camera.stop();
       setError(describeStartError(err));
     } finally {
       setIsStarting(false);
     }
   }
 
-  function stopCamera() {
+  function stopWorkout() {
     if (rafIdRef.current !== null) {
       cancelAnimationFrame(rafIdRef.current);
       rafIdRef.current = null;
     }
-
-    streamRef.current?.getTracks().forEach((track) => track.stop());
-    streamRef.current = null;
     lastFrameTimeRef.current = -1;
 
-    if (videoRef.current) {
-      videoRef.current.srcObject = null;
-    }
-
+    camera.stop();
     clearCanvas(canvasRef.current);
 
-    setIsCameraOn(false);
     setTrackingStatus("idle");
     setSummary(summarizeSession(repsRef.current));
   }
 
   function detectFrame() {
-    const video = videoRef.current;
+    const video = camera.videoRef.current;
     const canvas = canvasRef.current;
-    const landmarker = poseLandmarkerRef.current;
+    const detector = landmarker.landmarkerRef.current;
     const ctx = canvas?.getContext("2d");
 
-    if (!video || !canvas || !landmarker || !ctx || video.readyState < 2) {
+    if (!video || !canvas || !detector || !ctx || video.readyState < 2) {
       rafIdRef.current = requestAnimationFrame(detectFrame);
       return;
     }
@@ -198,39 +169,28 @@ function App() {
     lastFrameTimeRef.current = video.currentTime;
 
     const now = performance.now();
-    const result = landmarker.detectForVideo(video, now);
+    const result = detector.detectForVideo(video, now);
     ctx.clearRect(0, 0, canvas.width, canvas.height);
 
     // Per-frame landmarks stay local: nothing outside this tick reads them,
     // so they never touch state or a ref.
-    const pose = result.landmarks[0];
+    const reading = readArm(result.landmarks[0], sideRef.current, {
+      width: canvas.width,
+      height: canvas.height,
+    });
+    setTrackingStatus(reading.status);
 
     let angle: number | null = null;
     let isValid = false;
 
-    if (!pose) {
-      setTrackingStatus("no-person");
-    } else {
-      const indices = ARM_LANDMARKS[sideRef.current];
-      const arm = [
-        pose[indices.shoulder],
-        pose[indices.elbow],
-        pose[indices.wrist],
-      ];
-
-      if (arm.some((point) => (point?.visibility ?? 0) < MIN_VISIBILITY)) {
-        setTrackingStatus("arm-unclear");
-      } else {
-        const points = toPixels(arm, canvas);
-        drawArm(ctx, points);
-        setTrackingStatus("tracking");
-
-        // The angle must be measured in pixels: normalized x scales with width
-        // and y with height, so on a non-square frame the two axes are not
-        // comparable and the angle would be distorted.
-        angle = calculateAngle(points[0], points[1], points[2]);
-        isValid = !Number.isNaN(angle);
-      }
+    if (reading.points) {
+      drawArm(ctx, reading.points);
+      angle = calculateAngle(
+        reading.points[0],
+        reading.points[1],
+        reading.points[2],
+      );
+      isValid = !Number.isNaN(angle);
     }
 
     const previous = curlStateRef.current;
@@ -269,21 +229,19 @@ function App() {
     rafIdRef.current = requestAnimationFrame(detectFrame);
   }
 
+  // The camera stream and the landmarker are released by the hooks that own
+  // them; the only resource this screen owns is the animation loop.
   useEffect(() => {
     return () => {
       if (rafIdRef.current !== null) {
         cancelAnimationFrame(rafIdRef.current);
       }
-      streamRef.current?.getTracks().forEach((track) => track.stop());
-      streamRef.current = null;
-      poseLandmarkerRef.current?.close();
-      poseLandmarkerRef.current = null;
     };
   }, []);
 
   const buttonLabel = isStarting
     ? "Loading model..."
-    : isCameraOn
+    : camera.isActive
       ? "Stop Workout"
       : "Start Workout";
 
@@ -311,9 +269,12 @@ function App() {
         ))}
       </div>
 
-      <div className="relative w-full max-w-xl" style={{ aspectRatio }}>
+      <div
+        className="relative w-full max-w-xl"
+        style={{ aspectRatio: camera.aspectRatio }}
+      >
         <video
-          ref={videoRef}
+          ref={camera.videoRef}
           autoPlay
           muted
           playsInline
@@ -323,7 +284,7 @@ function App() {
           ref={canvasRef}
           className="absolute inset-0 h-full w-full rounded-lg"
         />
-        {isCameraOn && (
+        {camera.isActive && (
           <span className="absolute left-3 top-3 rounded bg-slate-950/80 px-2 py-1 text-xs text-slate-300">
             {TRACKING_MESSAGE[trackingStatus]}
           </span>
@@ -352,7 +313,7 @@ function App() {
 
       <button
         type="button"
-        onClick={isCameraOn ? stopCamera : startCamera}
+        onClick={camera.isActive ? stopWorkout : startWorkout}
         disabled={isStarting}
         className="rounded-md bg-indigo-600 px-6 py-3 font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
       >
@@ -415,74 +376,6 @@ function SummaryRow({ label, value }: { label: string; value: string }) {
 function formatSeconds(ms: number | null): string {
   if (ms === null) return "—";
   return `${(ms / 1000).toFixed(1)}s`;
-}
-
-function waitForVideoReady(video: HTMLVideoElement): Promise<void> {
-  if (video.readyState >= 2) return Promise.resolve();
-
-  return new Promise((resolve) => {
-    video.addEventListener("loadeddata", () => resolve(), { once: true });
-  });
-}
-
-async function createPoseLandmarker(): Promise<PoseLandmarker> {
-  const vision = await FilesetResolver.forVisionTasks(WASM_PATH);
-
-  return PoseLandmarker.createFromOptions(vision, {
-    baseOptions: { modelAssetPath: MODEL_PATH, delegate: "GPU" },
-    runningMode: "VIDEO",
-    numPoses: 1,
-  });
-}
-
-function toPixels(
-  arm: NormalizedLandmark[],
-  canvas: HTMLCanvasElement,
-): Point2D[] {
-  return arm.map((point) => ({
-    x: point.x * canvas.width,
-    y: point.y * canvas.height,
-  }));
-}
-
-function drawArm(ctx: CanvasRenderingContext2D, points: Point2D[]): void {
-  ctx.strokeStyle = "#818cf8";
-  ctx.lineWidth = 4;
-  ctx.beginPath();
-  points.forEach((point, index) => {
-    if (index === 0) ctx.moveTo(point.x, point.y);
-    else ctx.lineTo(point.x, point.y);
-  });
-  ctx.stroke();
-
-  ctx.fillStyle = "#f8fafc";
-  points.forEach((point) => {
-    ctx.beginPath();
-    ctx.arc(point.x, point.y, 6, 0, Math.PI * 2);
-    ctx.fill();
-  });
-}
-
-function clearCanvas(canvas: HTMLCanvasElement | null): void {
-  const ctx = canvas?.getContext("2d");
-  if (canvas && ctx) ctx.clearRect(0, 0, canvas.width, canvas.height);
-}
-
-function describeStartError(err: unknown): string {
-  const name = err instanceof DOMException ? err.name : "";
-
-  switch (name) {
-    case "NotAllowedError":
-      return "Camera permission denied. Allow camera access and try again.";
-    case "NotFoundError":
-      return "No camera was found on this device.";
-    case "NotReadableError":
-      return "The camera is already in use by another application.";
-    default:
-      return err instanceof Error && err.message
-        ? `Could not start tracking: ${err.message}`
-        : "Could not start tracking. Please try again.";
-  }
 }
 
 export default App;
