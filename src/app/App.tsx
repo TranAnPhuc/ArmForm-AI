@@ -1,4 +1,4 @@
-import { useEffect, useRef, useState } from "react";
+import { useEffect, useReducer, useRef, useState } from "react";
 import { describeStartError } from "../features/camera/cameraErrors";
 import { isCameraSupported, useCamera } from "../features/camera/useCamera";
 import type { ArmSide } from "../features/pose/landmarks";
@@ -11,24 +11,29 @@ import {
   type CurlPhase,
   type CurlState,
 } from "../features/exercise/curlStateMachine";
-import {
-  summarizeSession,
-  type RepMetrics,
-  type SessionSummary,
-} from "../features/exercise/formEvaluation";
+import type { RepMetrics } from "../features/exercise/formEvaluation";
 import {
   clearCanvas,
   drawArm,
   resizeCanvasToVideo,
 } from "../features/workout/canvasOverlay";
-import { formatSeconds } from "../features/workout/duration";
+import { formatCountdown, formatSeconds } from "../features/workout/duration";
 import { createRepEntry, type RepEntry } from "../features/workout/repHistory";
 import {
   formatWeightKg,
   MAX_WEIGHT_KG,
   parseWeightKg,
 } from "../features/workout/weight";
+import {
+  DEFAULT_REST_MS,
+  INITIAL_WORKOUT_STATE,
+  REST_OPTIONS_MS,
+  summarizeWorkout,
+  workoutReducer,
+  type WorkoutPhase,
+} from "../features/workout/workoutSession";
 import { RepList } from "../components/RepList";
+import { SetList } from "../components/SetList";
 
 /** The angle changes every frame; refreshing the readout ~10x a second is
  * plenty for a human to read and keeps React out of the detection loop. */
@@ -68,6 +73,10 @@ const EMPTY_DISPLAY: WorkoutDisplay = {
   romScore: null,
 };
 
+/** How often the rest countdown is recomputed. Finer than the second it shows,
+ * so the displayed value never lags a full second behind. */
+const REST_TICK_MS = 250;
+
 function App() {
   const camera = useCamera();
   const landmarker = usePoseLandmarker();
@@ -77,8 +86,13 @@ function App() {
   const [side, setSide] = useState<ArmSide>("right");
   const [trackingStatus, setTrackingStatus] = useState<TrackingStatus>("idle");
   const [display, setDisplay] = useState<WorkoutDisplay>(EMPTY_DISPLAY);
-  const [summary, setSummary] = useState<SessionSummary | null>(null);
   const [repHistory, setRepHistory] = useState<RepEntry[]>([]);
+
+  // Phase, set number, recorded sets and the rest deadline only make sense
+  // together, so they move as one — the case CLAUDE.md reserves useReducer for.
+  const [workout, dispatch] = useReducer(workoutReducer, INITIAL_WORKOUT_STATE);
+  const [restMs, setRestMs] = useState(DEFAULT_REST_MS);
+  const [notice, setNotice] = useState<string | null>(null);
 
   // The raw text, not the number: the user must be able to type "1" on the way
   // to "12" without the field rejecting the keystroke.
@@ -107,15 +121,61 @@ function App() {
     sideRef.current = side;
   }, [side]);
 
-  // The weight is deliberately left alone: it describes the dumbbell in the
-  // user's hand, which a reset does not change.
-  function resetWorkout() {
+  // Same reason: the loop must know whether reps currently count, and during
+  // rest they must not — putting the dumbbell down is not a repetition.
+  const workoutPhaseRef = useRef<WorkoutPhase>(workout.phase);
+  useEffect(() => {
+    workoutPhaseRef.current = workout.phase;
+  }, [workout.phase]);
+
+  // A rest is a deadline, so one interval is enough: however late a tick
+  // arrives, the reducer works out the truth from the clock it is handed.
+  useEffect(() => {
+    if (workout.phase !== "resting") return;
+
+    const id = setInterval(
+      () => dispatch({ type: "tick", now: performance.now() }),
+      REST_TICK_MS,
+    );
+
+    return () => clearInterval(id);
+  }, [workout.phase]);
+
+  /** Clears everything about the current set. */
+  function resetSet() {
     curlStateRef.current = createCurlState(performance.now());
     repsRef.current = [];
     lastUiUpdateRef.current = 0;
     setDisplay(EMPTY_DISPLAY);
-    setSummary(null);
     setRepHistory([]);
+  }
+
+  // The weight is deliberately left alone: it describes the dumbbell in the
+  // user's hand, which a reset does not change.
+  function resetWorkout() {
+    resetSet();
+    setNotice(null);
+    dispatch({ type: "reset" });
+  }
+
+  function finishSet() {
+    if (repsRef.current.length === 0) {
+      setNotice("Complete a rep before finishing the set.");
+      return;
+    }
+
+    setNotice(null);
+    dispatch({
+      type: "finish-set",
+      now: performance.now(),
+      reps: repsRef.current,
+      restMs,
+    });
+    resetSet();
+  }
+
+  function skipRest() {
+    dispatch({ type: "skip-rest" });
   }
 
   function selectSide(next: ArmSide) {
@@ -142,6 +202,7 @@ function App() {
 
       await landmarker.ensureLoaded();
 
+      dispatch({ type: "start" });
       rafIdRef.current = requestAnimationFrame(detectFrame);
     } catch (err) {
       // The camera may already be live when the model fails to load, so release
@@ -164,7 +225,10 @@ function App() {
     clearCanvas(canvasRef.current);
 
     setTrackingStatus("idle");
-    setSummary(summarizeSession(repsRef.current));
+    setNotice(null);
+    // Reps done since the last rest belong to a set nobody finished; the
+    // reducer banks them so they are not silently lost.
+    dispatch({ type: "finish-workout", reps: repsRef.current });
   }
 
   function detectFrame() {
@@ -208,6 +272,19 @@ function App() {
         reading.points[2],
       );
       isValid = !Number.isNaN(angle);
+    }
+
+    // Reps only count while a set is under way. During rest the arm still moves
+    // — racking the dumbbell, reaching for a drink — and none of that is
+    // exercise, so the state machine must not see those frames at all.
+    if (workoutPhaseRef.current !== "working") {
+      if (now - lastUiUpdateRef.current >= UI_REFRESH_MS) {
+        lastUiUpdateRef.current = now;
+        setDisplay((current) => ({ ...current, angle }));
+      }
+
+      rafIdRef.current = requestAnimationFrame(detectFrame);
+      return;
     }
 
     const previous = curlStateRef.current;
@@ -265,6 +342,13 @@ function App() {
     };
   }, []);
 
+  // Derived, not stored: the summary is only ever a view of the recorded sets,
+  // and a second copy could disagree with them.
+  const summary =
+    workout.phase === "finished"
+      ? summarizeWorkout(workout.completedSets)
+      : null;
+
   const buttonLabel = isStarting
     ? "Loading model..."
     : camera.isActive
@@ -310,6 +394,22 @@ function App() {
           />
           <span>kg</span>
         </label>
+
+        <label className="flex items-center gap-2 rounded-md bg-slate-800 px-3 py-2 text-sm text-slate-300">
+          <span>Rest</span>
+          <select
+            value={restMs}
+            onChange={(event) => setRestMs(Number(event.target.value))}
+            aria-label="Rest between sets"
+            className="rounded bg-slate-900 px-2 py-1 text-slate-100 outline-none focus:ring-1 focus:ring-indigo-500"
+          >
+            {REST_OPTIONS_MS.map((option) => (
+              <option key={option} value={option}>
+                {formatCountdown(option)}
+              </option>
+            ))}
+          </select>
+        </label>
       </div>
 
       {hasWeightError && (
@@ -340,7 +440,8 @@ function App() {
         )}
       </div>
 
-      <section className="grid w-full max-w-xl grid-cols-3 gap-2 text-center">
+      <section className="grid w-full max-w-xl grid-cols-2 gap-2 text-center sm:grid-cols-4">
+        <Stat label="Set" value={String(workout.setNumber)} />
         <Stat label="Reps" value={String(display.repCount)} />
         <Stat
           label="Elbow angle"
@@ -349,34 +450,72 @@ function App() {
         <Stat label="Phase" value={PHASE_LABEL[display.phase]} />
       </section>
 
-      {display.feedback !== null && (
-        <p className="text-center text-base font-medium text-indigo-300">
-          {display.feedback}
-          {display.romScore !== null && (
-            <span className="ml-2 text-sm text-slate-400">
-              ROM {display.romScore}%
-            </span>
-          )}
-        </p>
+      {workout.phase === "resting" ? (
+        <section className="flex w-full max-w-xl flex-col items-center gap-2 rounded-lg border border-slate-800 p-4">
+          <p className="text-xs uppercase tracking-wide text-slate-400">
+            Rest — next up set {workout.setNumber}
+          </p>
+          <p className="text-5xl font-semibold tabular-nums">
+            {formatCountdown(workout.restRemainingMs)}
+          </p>
+          <button
+            type="button"
+            onClick={skipRest}
+            className="rounded-md bg-slate-800 px-4 py-2 text-sm font-medium text-slate-200 hover:bg-slate-700"
+          >
+            Skip rest
+          </button>
+        </section>
+      ) : (
+        display.feedback !== null && (
+          <p className="text-center text-base font-medium text-indigo-300">
+            {display.feedback}
+            {display.romScore !== null && (
+              <span className="ml-2 text-sm text-slate-400">
+                ROM {display.romScore}%
+              </span>
+            )}
+          </p>
+        )
       )}
 
-      <button
-        type="button"
-        onClick={camera.isActive ? stopWorkout : startWorkout}
-        disabled={isStarting}
-        className="rounded-md bg-indigo-600 px-6 py-3 font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
-      >
-        {buttonLabel}
-      </button>
+      <div className="flex flex-wrap justify-center gap-2">
+        <button
+          type="button"
+          onClick={camera.isActive ? stopWorkout : startWorkout}
+          disabled={isStarting}
+          className="rounded-md bg-indigo-600 px-6 py-3 font-medium text-white hover:bg-indigo-500 disabled:cursor-not-allowed disabled:opacity-50"
+        >
+          {buttonLabel}
+        </button>
+
+        {workout.phase === "working" && (
+          <button
+            type="button"
+            onClick={finishSet}
+            className="rounded-md bg-slate-800 px-6 py-3 font-medium text-slate-100 hover:bg-slate-700"
+          >
+            Finish set
+          </button>
+        )}
+      </div>
+
+      {notice !== null && <p className="text-sm text-amber-300">{notice}</p>}
 
       {error !== null && <p className="text-sm text-red-400">{error}</p>}
+
+      <SetList sets={workout.completedSets} />
 
       <RepList entries={repHistory} />
 
       {summary !== null && summary.totalReps > 0 && (
         <section className="w-full max-w-xl rounded-lg border border-slate-800 p-4">
-          <h2 className="mb-3 text-lg font-semibold">Session summary</h2>
+          <h2 className="mb-3 text-lg font-semibold">Workout summary</h2>
           <dl className="grid grid-cols-2 gap-x-4 gap-y-2 text-sm sm:grid-cols-3">
+            <SummaryRow
+              label="Sets"
+              value={String(workout.completedSets.length)}
+            />
             <SummaryRow label="Total reps" value={String(summary.totalReps)} />
             <SummaryRow
               label="Good reps"
@@ -399,7 +538,7 @@ function App() {
 
       {summary !== null && summary.totalReps === 0 && (
         <p className="text-sm text-slate-400">
-          No complete reps recorded this session.
+          No complete reps recorded this workout.
         </p>
       )}
     </main>
