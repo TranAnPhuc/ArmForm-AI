@@ -13,9 +13,7 @@ describe("describeStartError", () => {
   it("explains a missing camera", () => {
     const err = new DOMException("none", "NotFoundError");
 
-    expect(describeStartError(err)).toBe(
-      "No camera was found on this device.",
-    );
+    expect(describeStartError(err)).toBe("No camera was found on this device.");
   });
 
   it("explains a camera held by another application", () => {

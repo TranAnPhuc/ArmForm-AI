@@ -17,10 +17,7 @@ function emptyPose(): PoseLandmark[] {
 }
 
 /** Places a visible shoulder, elbow and wrist for one side. */
-function poseWithArm(
-  side: "left" | "right",
-  visibility = 0.9,
-): PoseLandmark[] {
+function poseWithArm(side: "left" | "right", visibility = 0.9): PoseLandmark[] {
   const pose = emptyPose();
   const indices = ARM_LANDMARKS[side];
 

@@ -6,7 +6,10 @@ import {
 } from "./curlStateMachine";
 
 /** Feeds a sequence of angles through the machine, one per 100ms. */
-function run(angles: number[], initial: CurlState = createCurlState()): CurlState {
+function run(
+  angles: number[],
+  initial: CurlState = createCurlState(),
+): CurlState {
   return angles.reduce(
     (state, angle, index) =>
       updateCurlState(state, {

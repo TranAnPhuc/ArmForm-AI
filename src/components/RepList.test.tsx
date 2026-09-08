@@ -30,10 +30,7 @@ describe("RepList", () => {
   it("renders one row per completed rep, in order", () => {
     render(
       <RepList
-        entries={[
-          createRepEntry(1, CLEAN_REP),
-          createRepEntry(2, SHALLOW_REP),
-        ]}
+        entries={[createRepEntry(1, CLEAN_REP), createRepEntry(2, SHALLOW_REP)]}
       />,
     );
 
@@ -42,7 +39,9 @@ describe("RepList", () => {
     expect(rows).toHaveLength(3);
 
     expect(within(rows[1]).getByText("Good rep")).toBeInTheDocument();
-    expect(within(rows[2]).getByText("Curl slightly higher")).toBeInTheDocument();
+    expect(
+      within(rows[2]).getByText("Curl slightly higher"),
+    ).toBeInTheDocument();
   });
 
   it("shows the range-of-motion score and phase durations of each rep", () => {

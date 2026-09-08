@@ -37,7 +37,9 @@ describe("calculateRomScore", () => {
   });
 
   it("scores 0 for no movement at all", () => {
-    expect(calculateRomScore(repWith({ minAngle: 120, maxAngle: 120 }))).toBe(0);
+    expect(calculateRomScore(repWith({ minAngle: 120, maxAngle: 120 }))).toBe(
+      0,
+    );
   });
 
   it("never returns a negative score", () => {
@@ -184,7 +186,9 @@ describe("evaluateRep — regression F3: unmeasurable tempo", () => {
   });
 
   it("reports null averages when no rep had measurable tempo", () => {
-    const summary = summarizeSession([repWith({ liftingMs: null, loweringMs: null })]);
+    const summary = summarizeSession([
+      repWith({ liftingMs: null, loweringMs: null }),
+    ]);
 
     expect(summary.averageLiftingMs).toBeNull();
     expect(summary.averageLoweringMs).toBeNull();

@@ -107,9 +107,10 @@ export function evaluateRep(
     issues.push("lowering-too-fast");
   }
 
-  const message = issues.length === 0
-    ? FEEDBACK_MESSAGE["good-rep"]
-    : FEEDBACK_MESSAGE[issues[0]];
+  const message =
+    issues.length === 0
+      ? FEEDBACK_MESSAGE["good-rep"]
+      : FEEDBACK_MESSAGE[issues[0]];
 
   return {
     romScore: calculateRomScore(metrics, rules),

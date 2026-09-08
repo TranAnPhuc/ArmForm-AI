@@ -40,7 +40,11 @@ describe("calculateAngle", () => {
   });
 
   it("is unaffected by scale", () => {
-    const small = calculateAngle({ x: 0, y: 0 }, { x: 1, y: 0 }, { x: 1, y: 1 });
+    const small = calculateAngle(
+      { x: 0, y: 0 },
+      { x: 1, y: 0 },
+      { x: 1, y: 1 },
+    );
     const large = calculateAngle(
       { x: 0, y: 0 },
       { x: 100, y: 0 },
@@ -63,8 +67,16 @@ describe("calculateAngle", () => {
   it("never returns a value outside 0-180", () => {
     const cases: [Point2D, Point2D, Point2D][] = [
       [{ x: -3, y: 4 }, shoulder, { x: 5, y: -2 }],
-      [{ x: 0.1, y: 0.9 }, { x: 0.4, y: 0.4 }, { x: 0.9, y: 0.1 }],
-      [{ x: -1, y: -1 }, { x: -2, y: -2 }, { x: -3, y: -1 }],
+      [
+        { x: 0.1, y: 0.9 },
+        { x: 0.4, y: 0.4 },
+        { x: 0.9, y: 0.1 },
+      ],
+      [
+        { x: -1, y: -1 },
+        { x: -2, y: -2 },
+        { x: -3, y: -1 },
+      ],
     ];
 
     for (const [a, b, c] of cases) {

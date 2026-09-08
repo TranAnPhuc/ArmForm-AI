@@ -103,9 +103,7 @@ describe("angle geometry helper", () => {
 describe("full pipeline", () => {
   it("counts a clean rep and rates it good", () => {
     // 160 -> 40 -> 160 over 30 frames at 15fps, about 2 seconds
-    const { state, reps } = feed(
-      curl(0, { bottom: 160, top: 40, frames: 30 }),
-    );
+    const { state, reps } = feed(curl(0, { bottom: 160, top: 40, frames: 30 }));
 
     expect(state.repCount).toBe(1);
     expect(reps).toHaveLength(1);

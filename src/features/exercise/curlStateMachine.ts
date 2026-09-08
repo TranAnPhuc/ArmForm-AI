@@ -108,8 +108,7 @@ export function updateCurlState(
   const completesRep =
     phase === "down" && state.hasReachedUp && state.hasStartedFromDown;
 
-  const hasStartedFromDown =
-    phase === "down" ? true : state.hasStartedFromDown;
+  const hasStartedFromDown = phase === "down" ? true : state.hasStartedFromDown;
 
   const liftStartedAt =
     state.phase === "down" && phase !== "down"
