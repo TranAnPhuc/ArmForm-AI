@@ -24,6 +24,11 @@ import {
 } from "../features/workout/useWorkoutLoop";
 import { RepList } from "../components/RepList";
 import { SetList } from "../components/SetList";
+// TEMPORARY — left-arm investigation. Remove with armDiagnostics.ts.
+import * as armDiagnostics from "../features/pose/armDiagnostics";
+
+/** How long one diagnostic run records for. Long enough for five reps. */
+const DIAGNOSTIC_SECONDS = 20;
 
 const TRACKING_MESSAGE: Record<TrackingStatus, string> = {
   idle: "",
@@ -57,6 +62,8 @@ function App() {
   const [workout, dispatch] = useReducer(workoutReducer, INITIAL_WORKOUT_STATE);
   const [restMs, setRestMs] = useState(DEFAULT_REST_MS);
   const [notice, setNotice] = useState<string | null>(null);
+  // TEMPORARY diagnostic state.
+  const [isDiagnosing, setIsDiagnosing] = useState(false);
 
   const canvasRef = useRef<HTMLCanvasElement | null>(null);
 
@@ -325,6 +332,27 @@ function App() {
           </button>
         )}
       </div>
+
+      {/* TEMPORARY diagnostic control — remove with armDiagnostics.ts. */}
+      {camera.isActive && (
+        <button
+          type="button"
+          disabled={isDiagnosing}
+          onClick={() => {
+            setIsDiagnosing(true);
+            armDiagnostics.startRecording(
+              DIAGNOSTIC_SECONDS,
+              performance.now(),
+              () => setIsDiagnosing(false),
+            );
+          }}
+          className="rounded-md border border-amber-700 px-4 py-2 text-xs text-amber-300 disabled:opacity-50"
+        >
+          {isDiagnosing
+            ? `Recording ${DIAGNOSTIC_SECONDS}s — do 5 reps now`
+            : `Diagnose ${side} arm (${DIAGNOSTIC_SECONDS}s)`}
+        </button>
+      )}
 
       {notice !== null && <p className="text-sm text-amber-300">{notice}</p>}
 

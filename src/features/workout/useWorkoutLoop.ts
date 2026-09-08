@@ -22,6 +22,8 @@ import {
 import type { RepMetrics } from "../exercise/formEvaluation";
 import { clearCanvas, drawArm } from "./canvasOverlay";
 import { createRepEntry, type RepEntry } from "./repHistory";
+// TEMPORARY — left-arm investigation. Remove with armDiagnostics.ts.
+import * as armDiagnostics from "../pose/armDiagnostics";
 
 /** The angle changes every frame; refreshing the readout ~10x a second is
  * plenty for a human to read and keeps React out of the detection loop. */
@@ -167,6 +169,17 @@ export function useWorkoutLoop({
     });
     setTrackingStatus(reading.status);
 
+    // TEMPORARY — observation only, computed solely while recording so a normal
+    // frame pays nothing. It re-reads the raw landmarks because `reading` has
+    // already discarded the coordinates of a rejected frame, and those are
+    // exactly the frames under investigation.
+    const diagAnalysis = armDiagnostics.isRecording()
+      ? armDiagnostics.analyzeArmFrame(result.landmarks[0], sideRef.current, {
+          width: canvas.width,
+          height: canvas.height,
+        })
+      : null;
+
     let angle: number | null = null;
     let isValid = false;
 
@@ -184,6 +197,22 @@ export function useWorkoutLoop({
     // — racking the dumbbell, reaching for a drink — and none of that is
     // exercise, so the state machine must not see those frames at all.
     if (!isCountingRef.current) {
+      // TEMPORARY — a frame the state machine never sees is still evidence.
+      if (diagAnalysis) {
+        const held = curlStateRef.current;
+        armDiagnostics.record(
+          diagAnalysis,
+          {
+            side: sideRef.current,
+            isCounting: false,
+            prevPhase: held.phase,
+            newPhase: held.phase,
+            repCount: held.repCount,
+          },
+          now,
+        );
+      }
+
       if (now - lastUiUpdateRef.current >= UI_REFRESH_MS) {
         lastUiUpdateRef.current = now;
         setDisplay((current) => ({ ...current, angle }));
@@ -200,6 +229,21 @@ export function useWorkoutLoop({
       isValid,
     });
     curlStateRef.current = next;
+
+    // TEMPORARY — records what the state machine did with this frame.
+    if (diagAnalysis) {
+      armDiagnostics.record(
+        diagAnalysis,
+        {
+          side: sideRef.current,
+          isCounting: true,
+          prevPhase: previous.phase,
+          newPhase: next.phase,
+          repCount: next.repCount,
+        },
+        now,
+      );
+    }
 
     const repCompleted = next.repCount > previous.repCount;
 
